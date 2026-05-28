@@ -84,6 +84,8 @@ function getLeads({ status, category, minScore, limit = 100, offset = 0 } = {}) 
   if (status) { query += ' AND status = ?'; params.push(status); }
   if (category) { query += ' AND category = ?'; params.push(category); }
   if (minScore) { query += ' AND score >= ?'; params.push(minScore); }
+  // Only mobile numbers (SG mobiles start with 8 or 9) or leads with email
+  query += ` AND (phone LIKE '+65 8%' OR phone LIKE '+65 9%' OR email != '')`;
   query += ' ORDER BY score DESC, created_at DESC LIMIT ? OFFSET ?';
   params.push(limit, offset);
   return db.prepare(query).all(...params);
