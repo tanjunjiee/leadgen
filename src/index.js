@@ -154,12 +154,12 @@ cron.schedule(SCRAPE_CRON, async () => {
 
 // ── Start server ──────────────────────────────────────────────
 
-app.listen(process.env.PORT || 8080, ...)
+app.listen(process.env.PORT || 8080, () => {
   console.log(`
 ╔════════════════════════════════════╗
 ║   Kitchenware Lead Generator       ║
-║   Running on port ${PORT}             ║
-║   Scrape cron: ${SCRAPE_CRON}       ║
+║   Running on port ${process.env.PORT || 8080}             ║
+║   Scrape cron: ${process.env.SCRAPE_CRON}       ║
 ╚════════════════════════════════════╝
   `);
 });
