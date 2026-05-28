@@ -41,7 +41,11 @@ app.get('/api/leads', (req, res) => {
       limit: limit ? parseInt(limit) : 100,
       offset: offset ? parseInt(offset) : 0,
     });
-    res.json(leads);
+    const mapped = leads.map(l => ({
+      ...l,
+      type: l.category === 'fnb' ? 'F&B' : l.category === 'id' ? 'Interior' : 'Other',
+    }));
+    res.json(mapped);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
