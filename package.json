@@ -1,0 +1,22 @@
+{
+  "name": "kitchenware-leadgen",
+  "version": "1.0.0",
+  "description": "Lead scraper + outreach pipeline for kitchenware B2B Singapore",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "scrape": "node src/scraper.js",
+    "test:scraper": "node src/test-scraper.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.2",
+    "node-cron": "^3.0.3",
+    "better-sqlite3": "^9.4.3",
+    "twilio": "^4.20.1",
+    "dotenv": "^16.3.1",
+    "cors": "^2.8.5",
+    "node-telegram-bot-api": "^0.64.0"
+  }
+}
