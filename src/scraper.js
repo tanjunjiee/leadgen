@@ -2,6 +2,7 @@ require('dotenv').config();
 const axios = require('axios');
 const { upsertLead, logScrape } = require('./db');
 const { SEARCH_QUERIES, normaliseLead } = require('./qualifier');
+const { scrapeEmailFromWebsite } = require('./enricher');
 
 const PLACES_BASE = 'https://maps.googleapis.com/maps/api/place';
 const API_KEY = process.env.GOOGLE_MAPS_API_KEY;
@@ -92,6 +93,11 @@ async function scrapeQuery({ query, category, subcategory }, maxPages = 2) {
         // Get full details (phone, website, hours)
         const details = await getPlaceDetails(place.place_id);
         await sleep(100); // be polite to the API
+
+        // Enrich with email from website
+        if (details.website && !details.email) {
+          details.email = await scrapeEmailFromWebsite(details.website);
+        }
 
         const lead = normaliseLead(details, category, subcategory);
 
