@@ -17,49 +17,58 @@ function getDb() {
 function initSchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS leads (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      name        TEXT NOT NULL,
-      address     TEXT,
-      area        TEXT,
-      category    TEXT NOT NULL,  -- 'fnb' or 'id'
-      subcategory TEXT,           -- 'cafe','restaurant','bakery','dessert','id_firm'
-      phone       TEXT,
-      email       TEXT,
-      website     TEXT,
-      google_place_id TEXT UNIQUE,
-      rating      REAL,
-      review_count INTEGER,
-      score       INTEGER DEFAULT 0,
-      status      TEXT DEFAULT 'new',  -- new/contacted/replied/qualified/dead
-      outreach_channel TEXT,           -- whatsapp/email
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      name              TEXT NOT NULL,
+      address           TEXT,
+      area              TEXT,
+      category          TEXT NOT NULL,
+      subcategory       TEXT,
+      phone             TEXT,
+      phone_type        TEXT,
+      email             TEXT,
+      website           TEXT,
+      google_place_id   TEXT UNIQUE,
+      rating            REAL,
+      review_count      INTEGER,
+      score             INTEGER DEFAULT 0,
+      status            TEXT DEFAULT 'new',
+      outreach_channel  TEXT,
       last_contacted_at TEXT,
-      notes       TEXT,
-      created_at  TEXT DEFAULT (datetime('now')),
-      updated_at  TEXT DEFAULT (datetime('now'))
+      notes             TEXT,
+      review_snippets   TEXT,
+      editorial_summary TEXT,
+      created_at        TEXT DEFAULT (datetime('now')),
+      updated_at        TEXT DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS outreach_log (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      lead_id    INTEGER NOT NULL,
-      channel    TEXT NOT NULL,
-      message    TEXT NOT NULL,
-      sent_at    TEXT DEFAULT (datetime('now')),
-      approved   INTEGER DEFAULT 0,
+      id       INTEGER PRIMARY KEY AUTOINCREMENT,
+      lead_id  INTEGER NOT NULL,
+      channel  TEXT NOT NULL,
+      message  TEXT NOT NULL,
+      sent_at  TEXT DEFAULT (datetime('now')),
+      approved INTEGER DEFAULT 0,
       FOREIGN KEY (lead_id) REFERENCES leads(id)
     );
 
     CREATE TABLE IF NOT EXISTS scrape_log (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      query      TEXT,
-      results    INTEGER DEFAULT 0,
-      new_leads  INTEGER DEFAULT 0,
-      ran_at     TEXT DEFAULT (datetime('now'))
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      query     TEXT,
+      results   INTEGER DEFAULT 0,
+      new_leads INTEGER DEFAULT 0,
+      ran_at    TEXT DEFAULT (datetime('now'))
     );
 
-    CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status);
+    CREATE INDEX IF NOT EXISTS idx_leads_status   ON leads(status);
     CREATE INDEX IF NOT EXISTS idx_leads_category ON leads(category);
-    CREATE INDEX IF NOT EXISTS idx_leads_score ON leads(score DESC);
+    CREATE INDEX IF NOT EXISTS idx_leads_score    ON leads(score DESC);
   `);
+
+  // Migrate existing DBs — safely add new columns if they don't exist yet
+  const cols = db.prepare('PRAGMA table_info(leads)').all().map(c => c.name);
+  if (!cols.includes('review_snippets'))   db.exec('ALTER TABLE leads ADD COLUMN review_snippets TEXT');
+  if (!cols.includes('editorial_summary')) db.exec('ALTER TABLE leads ADD COLUMN editorial_summary TEXT');
+  if (!cols.includes('phone_type'))        db.exec('ALTER TABLE leads ADD COLUMN phone_type TEXT');
 }
 
 // ── Lead queries ──────────────────────────────────────────────
@@ -70,9 +79,23 @@ function upsertLead(lead) {
   if (existing) return { id: existing.id, isNew: false };
 
   const result = db.prepare(`
-    INSERT INTO leads (name, address, area, category, subcategory, phone, email, website, google_place_id, rating, review_count, score)
-    VALUES (@name, @address, @area, @category, @subcategory, @phone, @email, @website, @google_place_id, @rating, @review_count, @score)
-  `).run(lead);
+    INSERT INTO leads (
+      name, address, area, category, subcategory,
+      phone, phone_type, email, website, google_place_id,
+      rating, review_count, score,
+      review_snippets, editorial_summary
+    ) VALUES (
+      @name, @address, @area, @category, @subcategory,
+      @phone, @phone_type, @email, @website, @google_place_id,
+      @rating, @review_count, @score,
+      @review_snippets, @editorial_summary
+    )
+  `).run({
+    ...lead,
+    // Serialise arrays/objects to JSON for SQLite storage
+    review_snippets:   lead.review_snippets   ? JSON.stringify(lead.review_snippets)   : null,
+    editorial_summary: lead.editorial_summary || null,
+  });
 
   return { id: result.lastInsertRowid, isNew: true };
 }
@@ -81,14 +104,20 @@ function getLeads({ status, category, minScore, limit = 100, offset = 0 } = {}) 
   const db = getDb();
   let query = 'SELECT * FROM leads WHERE 1=1';
   const params = [];
-  if (status) { query += ' AND status = ?'; params.push(status); }
+  if (status)   { query += ' AND status = ?';   params.push(status); }
   if (category) { query += ' AND category = ?'; params.push(category); }
-  if (minScore) { query += ' AND score >= ?'; params.push(minScore); }
-  // Only mobile numbers (SG mobiles start with 8 or 9) or leads with email
+  if (minScore) { query += ' AND score >= ?';   params.push(minScore); }
   query += ` AND (phone LIKE '+65 8%' OR phone LIKE '+65 9%' OR email != '')`;
   query += ' ORDER BY score DESC, created_at DESC LIMIT ? OFFSET ?';
   params.push(limit, offset);
-  return db.prepare(query).all(...params);
+
+  const rows = db.prepare(query).all(...params);
+
+  // Parse review_snippets back from JSON
+  return rows.map(r => ({
+    ...r,
+    review_snippets: r.review_snippets ? JSON.parse(r.review_snippets) : [],
+  }));
 }
 
 function updateLeadStatus(id, status) {

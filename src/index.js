@@ -111,6 +111,55 @@ app.post('/api/leads/:id/send', async (req, res) => {
   }
 });
 
+// ── Apollo DM lookup ──────────────────────────────────────────
+// Called manually from dashboard only — each call uses 1 Apollo credit
+
+app.post('/api/apollo/lookup', async (req, res) => {
+  const apolloKey = process.env.APOLLO_API_KEY;
+  if (!apolloKey) return res.status(500).json({ error: 'APOLLO_API_KEY not set in environment' });
+
+  const { name, website } = req.body;
+  if (!name) return res.status(400).json({ error: 'name is required' });
+
+  try {
+    const axios = require('axios');
+    const body = {
+      api_key: apolloKey,
+      q_organization_name: name,
+      organization_locations: ['Singapore'],
+      titles: [
+        'owner', 'founder', 'director', 'operations', 'procurement',
+        'manager', 'f&b manager', 'kitchen manager', 'purchasing',
+      ],
+      page: 1,
+      per_page: 3,
+    };
+
+    if (website) {
+      body.q_organization_domains = [website.replace(/^https?:\/\//, '').replace(/\/.*$/, '')];
+    }
+
+    const result = await axios.post('https://api.apollo.io/v1/mixed_people/search', body, {
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
+    });
+
+    const people = result.data.people || [];
+    if (!people.length) return res.json({ found: false });
+
+    const top = people[0];
+    res.json({
+      found:    true,
+      name:     top.name,
+      title:    top.title,
+      email:    top.email,
+      linkedin: top.linkedin_url,
+    });
+  } catch (err) {
+    console.error('[apollo] lookup error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Scraping ──────────────────────────────────────────────────
 
 app.post('/api/scrape', async (req, res) => {
