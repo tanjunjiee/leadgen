@@ -7,13 +7,9 @@ const { scrapeEmailFromWebsite } = require('./enricher');
 const PLACES_BASE = 'https://maps.googleapis.com/maps/api/place';
 const API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
-// Singapore bounding box — keeps results local
 const SINGAPORE_LOCATION = '1.3521,103.8198';
-const RADIUS_METERS = 25000; // covers most of Singapore island
+const RADIUS_METERS = 25000;
 
-/**
- * Text search for a single query, returns array of place IDs
- */
 async function textSearch(query, pageToken = null) {
   const params = {
     query,
@@ -38,8 +34,10 @@ async function textSearch(query, pageToken = null) {
 }
 
 /**
- * Get full details for a place ID
- * We request only the fields we need to minimise cost
+ * Get full details for a place ID.
+ * 'reviews' returns up to 5 of the most relevant Google reviews.
+ * Each review has: author_name, rating, text, relative_time_description.
+ * We store the text snippets to power AI-personalised outreach later.
  */
 async function getPlaceDetails(placeId) {
   const fields = [
@@ -53,6 +51,8 @@ async function getPlaceDetails(placeId) {
     'opening_hours',
     'rating',
     'user_ratings_total',
+    'reviews',          // up to 5 reviews — used for AI outreach personalisation
+    'editorial_summary', // short AI-generated description from Google if available
   ].join(',');
 
   const res = await axios.get(`${PLACES_BASE}/details/json`, {
@@ -66,15 +66,8 @@ async function getPlaceDetails(placeId) {
   return res.data.result;
 }
 
-/**
- * Sleep helper — Google requires a short delay between paginated requests
- */
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-/**
- * Scrape a single query, up to maxPages pages (each page = 20 results)
- * Returns { found, added, skipped }
- */
 async function scrapeQuery({ query, category, subcategory }, maxPages = 2) {
   console.log(`[scraper] Searching: "${query}"`);
   let found = 0, added = 0, skipped = 0;
@@ -82,7 +75,7 @@ async function scrapeQuery({ query, category, subcategory }, maxPages = 2) {
   let page = 0;
 
   do {
-    if (pageToken) await sleep(2000); // Google requires 2s between paginated requests
+    if (pageToken) await sleep(2000);
 
     const { places, nextPageToken } = await textSearch(query, pageToken);
     pageToken = nextPageToken;
@@ -90,9 +83,8 @@ async function scrapeQuery({ query, category, subcategory }, maxPages = 2) {
 
     for (const place of places) {
       try {
-        // Get full details (phone, website, hours)
         const details = await getPlaceDetails(place.place_id);
-        await sleep(100); // be polite to the API
+        await sleep(100);
 
         // Enrich with email from website
         if (details.website && !details.email) {
@@ -127,9 +119,6 @@ async function scrapeQuery({ query, category, subcategory }, maxPages = 2) {
   return { found, added, skipped };
 }
 
-/**
- * Run all queries — called by the cron job
- */
 async function runFullScrape() {
   if (!API_KEY || API_KEY === 'your_google_maps_api_key_here') {
     console.error('[scraper] ERROR: GOOGLE_MAPS_API_KEY not set in .env');
@@ -145,7 +134,7 @@ async function runFullScrape() {
       const { found, added } = await scrapeQuery(queryConfig);
       totalFound += found;
       totalAdded += added;
-      await sleep(500); // pause between queries
+      await sleep(500);
     } catch (err) {
       console.error(`[scraper] Query failed: ${queryConfig.query} — ${err.message}`);
     }
@@ -156,16 +145,12 @@ async function runFullScrape() {
   return { totalFound, totalAdded, elapsed };
 }
 
-/**
- * Scrape a single custom query — called from the dashboard "Find new leads" button
- */
 async function scrapeCustomQuery(query, category = 'fnb') {
   return scrapeQuery({ query, category, subcategory: category === 'id' ? 'id_firm' : 'restaurant' });
 }
 
 module.exports = { runFullScrape, scrapeCustomQuery };
 
-// Run directly: node src/scraper.js
 if (require.main === module) {
   runFullScrape().then(result => {
     console.log('Result:', result);
