@@ -140,7 +140,11 @@ app.post('/api/apollo/lookup', async (req, res) => {
     }
 
     const result = await axios.post('https://api.apollo.io/v1/mixed_people/search', body, {
-      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        'x-api-key': apolloKey,
+      },
     });
 
     const people = result.data.people || [];
@@ -155,8 +159,10 @@ app.post('/api/apollo/lookup', async (req, res) => {
       linkedin: top.linkedin_url,
     });
   } catch (err) {
-    console.error('[apollo] lookup error:', err.message);
-    res.status(500).json({ error: err.message });
+    // Surface Apollo's actual response body so we can diagnose the real issue
+    const detail = err.response?.data || err.message;
+    console.error('[apollo] lookup error:', JSON.stringify(detail));
+    res.status(500).json({ error: typeof detail === 'string' ? detail : JSON.stringify(detail) });
   }
 });
 
