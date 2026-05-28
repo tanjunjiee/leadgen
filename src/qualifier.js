@@ -81,8 +81,7 @@ function scoreLead(place, subcategory) {
  * and common patterns. Real email extraction requires scraping the website.
  */
 function extractEmail(place) {
-  // Placeholder — in production, scrape place.website for mailto: links
-  return null;
+  return place.email || null;
 }
 
 /**
