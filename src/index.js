@@ -154,7 +154,7 @@ cron.schedule(SCRAPE_CRON, async () => {
 
 // ── Start server ──────────────────────────────────────────────
 
-app.listen(PORT, () => {
+app.listen(process.env.PORT || 8080, ...)
   console.log(`
 ╔════════════════════════════════════╗
 ║   Kitchenware Lead Generator       ║
