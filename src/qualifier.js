@@ -1,7 +1,7 @@
 /**
  * Lead qualifier
  * Scores a raw Google Places result from 0–100.
- * A lead must have phone OR email to qualify at all.
+ * A lead must have mobile phone OR email to qualify at all.
  * Score determines priority in the outreach queue.
  */
 
@@ -30,16 +30,42 @@ const SEARCH_QUERIES = [
 ];
 
 /**
+ * Classify a phone number for Singapore:
+ * - 'mobile'   → starts with 8 or 9 after +65 (direct line, likely decision maker)
+ * - 'landline' → starts with 6 after +65 (receptionist / main line)
+ * - 'unknown'  → no number or unrecognised format
+ */
+function classifyPhone(place) {
+  const raw = place.international_phone_number || place.formatted_phone_number || '';
+  const digits = raw.replace(/\D/g, '');
+
+  // International format: 65 + 8 digits = 10 digits total
+  if (/^658[0-9]{7}$/.test(digits)) return 'mobile'; // 8xxxxxxx
+  if (/^659[0-9]{7}$/.test(digits)) return 'mobile'; // 9xxxxxxx
+  if (/^656[0-9]{7}$/.test(digits)) return 'landline'; // 6xxxxxxx
+
+  // Local format without country code: 8 digits starting with 8/9/6
+  if (/^[89][0-9]{7}$/.test(digits)) return 'mobile';
+  if (/^6[0-9]{7}$/.test(digits))    return 'landline';
+
+  return digits.length > 0 ? 'landline' : 'unknown';
+}
+
+/**
  * Score a raw Google Places result
  * Returns { score, disqualified, reason }
  */
 function scoreLead(place, subcategory) {
-  // Hard disqualify — must have at least phone or email
-  const hasPhone = !!(place.formatted_phone_number || place.international_phone_number);
-  const hasEmail = extractEmail(place);
+  const phoneType = classifyPhone(place);
+  const hasMobile   = phoneType === 'mobile';
+  const hasLandline = phoneType === 'landline';
+  const hasEmail    = extractEmail(place);
 
-  if (!hasPhone && !hasEmail) {
-    return { score: 0, disqualified: true, reason: 'No contact info' };
+  // Hard disqualify — must have at least a mobile or email to be worth pursuing
+  // Landline-only leads go to a receptionist, not a decision maker
+  if (!hasMobile && !hasEmail) {
+    const reason = hasLandline ? 'Landline only — no direct contact' : 'No contact info';
+    return { score: 0, disqualified: true, reason };
   }
 
   // Hard disqualify — permanently closed
@@ -50,35 +76,37 @@ function scoreLead(place, subcategory) {
   let score = 0;
 
   // Contact info (40 pts)
-  if (hasPhone) score += 25;
-  if (hasEmail) score += 15;
+  // Mobile is worth more — it's a direct line to the decision maker
+  if (hasMobile)   score += 25;
+  else if (hasLandline) score += 10; // kept in case email also present
+  if (hasEmail)    score += 15;
 
   // Business activity signals (30 pts)
   if (place.business_status === 'OPERATIONAL') score += 15;
-  if (place.opening_hours?.open_now) score += 5;
-  if (place.website) score += 10;
+  if (place.opening_hours?.open_now)           score += 5;
+  if (place.website)                           score += 10;
 
   // Rating signals — higher rated = more established = better prospect (20 pts)
-  const rating = place.rating || 0;
+  const rating      = place.rating || 0;
   const reviewCount = place.user_ratings_total || 0;
-  if (rating >= 4.0) score += 10;
+  if (rating >= 4.0)      score += 10;
   else if (rating >= 3.5) score += 5;
-  if (reviewCount >= 50) score += 10;
+  if (reviewCount >= 50)      score += 10;
   else if (reviewCount >= 20) score += 5;
 
   // Category bonus (10 pts)
-  // New openings and bakeries/dessert shops tend to need equipment fast
-  if (['bakery','dessert'].includes(subcategory)) score += 10;
-  else if (subcategory === 'id_firm') score += 8; // high value
-  else score += 5;
+  if (['bakery', 'dessert'].includes(subcategory)) score += 10;
+  else if (subcategory === 'id_firm')              score += 8;
+  else                                             score += 5;
 
   return { score: Math.min(score, 100), disqualified: false, reason: null };
 }
 
 /**
- * Try to extract email from place data
- * Google Places doesn't return emails directly — this checks the website field
- * and common patterns. Real email extraction requires scraping the website.
+ * Try to extract email from place data.
+ * Google Places doesn't return emails directly — the enricher (scraper.js)
+ * scrapes place.website and writes the result back to place.email before
+ * normaliseLead is called.
  */
 function extractEmail(place) {
   return place.email || null;
@@ -89,25 +117,25 @@ function extractEmail(place) {
  */
 function normaliseLead(place, category, subcategory) {
   const { score, disqualified, reason } = scoreLead(place, subcategory);
-
-  // Extract area from address (last meaningful component before Singapore)
+  const phoneType = classifyPhone(place);
   const area = extractArea(place.formatted_address || '');
 
   return {
-    name: place.name,
-    address: place.formatted_address || '',
+    name:             place.name,
+    address:          place.formatted_address || '',
     area,
     category,
     subcategory,
-    phone: place.international_phone_number || place.formatted_phone_number || '',
-    email: extractEmail(place) || '',
-    website: place.website || '',
-    google_place_id: place.place_id,
-    rating: place.rating || null,
-    review_count: place.user_ratings_total || 0,
+    phone:            place.international_phone_number || place.formatted_phone_number || '',
+    phone_type:       phoneType, // 'mobile' | 'landline' | 'unknown'
+    email:            extractEmail(place) || '',
+    website:          place.website || '',
+    google_place_id:  place.place_id,
+    rating:           place.rating || null,
+    review_count:     place.user_ratings_total || 0,
     score,
-    _disqualified: disqualified,
-    _reason: reason,
+    _disqualified:    disqualified,
+    _reason:          reason,
   };
 }
 
@@ -120,4 +148,4 @@ function extractArea(address) {
   return 'Singapore';
 }
 
-module.exports = { SEARCH_QUERIES, scoreLead, normaliseLead };
+module.exports = { SEARCH_QUERIES, scoreLead, normaliseLead, classifyPhone };
