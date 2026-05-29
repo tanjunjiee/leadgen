@@ -231,13 +231,17 @@ async function runFullScrape() {
     return { error: 'API key not configured' };
   }
 
-  console.log(`[scraper] Starting — ${SEARCH_QUERIES.length} queries`);
+  const testMode   = process.env.TEST_MODE === 'true';
+  const queries    = testMode ? SEARCH_QUERIES.slice(0, 2) : SEARCH_QUERIES;
+  const maxPages   = testMode ? 1 : 2; // test = 1 page (~20 leads), full = 2 pages (~40)
+
+  console.log(`[scraper] Starting — ${queries.length} queries${testMode ? ' (TEST MODE — 2 queries, 1 page each ≈ 10-20 leads)' : ''}`);
   const start = Date.now();
   let totalFound = 0, totalAdded = 0, totalUpdated = 0;
 
-  for (const queryConfig of SEARCH_QUERIES) {
+  for (const queryConfig of queries) {
     try {
-      const { found, added, updated } = await scrapeQuery(queryConfig);
+      const { found, added, updated } = await scrapeQuery(queryConfig, maxPages);
       totalFound   += found;
       totalAdded   += added;
       totalUpdated += updated;
