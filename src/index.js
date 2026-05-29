@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors    = require('cors');
 const cron    = require('node-cron');
-const { getLeads, getLeadById, updateLeadStatus, getStats, getConversionStats } = require('./db');
+const { getLeads, getLeadById, updateLeadStatus, getStats, getConversionStats, logOutreach } = require('./db');
 const { runFullScrape, scrapeCustomQuery } = require('./scraper');
 const { generateOutreach } = require('./outreach');
 const { sendApprovalRequest, notifyNewLeads, notifyLeadReplied, recordOutreach } = require('./notify');
@@ -125,6 +125,19 @@ app.post('/api/apollo/lookup', async (req, res) => {
   } catch (err) {
     const detail = err.response?.data || err.message;
     res.status(500).json({ error: typeof detail === 'string' ? detail : JSON.stringify(detail) });
+  }
+});
+
+// ── Outreach log (called when user clicks Send) ───────────────
+app.post('/api/leads/:id/outreach-log', async (req, res) => {
+  try {
+    const { channel, message } = req.body;
+    const id = parseInt(req.params.id);
+    if (message) logOutreach(id, channel || 'whatsapp', message);
+    updateLeadStatus(id, 'contacted');
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
