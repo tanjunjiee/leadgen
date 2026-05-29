@@ -1,8 +1,6 @@
 const Database = require('better-sqlite3');
-const path = require('path');
 
 const DB_PATH = process.env.DB_PATH || '/tmp/leads.db';
-
 let db;
 
 function getDb() {
@@ -64,7 +62,7 @@ function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_leads_score    ON leads(score DESC);
   `);
 
-  // Migrate existing DBs — safely add new columns if they don't exist yet
+  // Migrate existing DBs safely
   const cols = db.prepare('PRAGMA table_info(leads)').all().map(c => c.name);
   if (!cols.includes('review_snippets'))   db.exec('ALTER TABLE leads ADD COLUMN review_snippets TEXT');
   if (!cols.includes('editorial_summary')) db.exec('ALTER TABLE leads ADD COLUMN editorial_summary TEXT');
@@ -76,7 +74,40 @@ function initSchema() {
 function upsertLead(lead) {
   const db = getDb();
   const existing = db.prepare('SELECT id FROM leads WHERE google_place_id = ?').get(lead.google_place_id);
-  if (existing) return { id: existing.id, isNew: false };
+
+  const reviewSnippetsJson = lead.review_snippets ? JSON.stringify(lead.review_snippets) : null;
+  const editorialSummary   = lead.editorial_summary || null;
+
+  if (existing) {
+    // Always update review data, rating, score on re-scrape
+    // so existing leads get enriched without losing status/notes
+    db.prepare(`
+      UPDATE leads SET
+        review_snippets   = @review_snippets,
+        editorial_summary = @editorial_summary,
+        rating            = @rating,
+        review_count      = @review_count,
+        score             = @score,
+        phone             = @phone,
+        phone_type        = @phone_type,
+        email             = CASE WHEN @email != '' THEN @email ELSE email END,
+        website           = CASE WHEN @website != '' THEN @website ELSE website END,
+        updated_at        = datetime('now')
+      WHERE id = @id
+    `).run({
+      id:                existing.id,
+      review_snippets:   reviewSnippetsJson,
+      editorial_summary: editorialSummary,
+      rating:            lead.rating || null,
+      review_count:      lead.review_count || 0,
+      score:             lead.score || 0,
+      phone:             lead.phone || '',
+      phone_type:        lead.phone_type || '',
+      email:             lead.email || '',
+      website:           lead.website || '',
+    });
+    return { id: existing.id, isNew: false };
+  }
 
   const result = db.prepare(`
     INSERT INTO leads (
@@ -92,12 +123,22 @@ function upsertLead(lead) {
     )
   `).run({
     ...lead,
-    // Serialise arrays/objects to JSON for SQLite storage
-    review_snippets:   lead.review_snippets   ? JSON.stringify(lead.review_snippets)   : null,
-    editorial_summary: lead.editorial_summary || null,
+    review_snippets:   reviewSnippetsJson,
+    editorial_summary: editorialSummary,
   });
 
   return { id: result.lastInsertRowid, isNew: true };
+}
+
+// Direct lookup by ID — avoids loading all leads to find one
+function getLeadById(id) {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM leads WHERE id = ?').get(id);
+  if (!row) return null;
+  return {
+    ...row,
+    review_snippets: row.review_snippets ? JSON.parse(row.review_snippets) : [],
+  };
 }
 
 function getLeads({ status, category, minScore, limit = 100, offset = 0 } = {}) {
@@ -107,13 +148,19 @@ function getLeads({ status, category, minScore, limit = 100, offset = 0 } = {}) 
   if (status)   { query += ' AND status = ?';   params.push(status); }
   if (category) { query += ' AND category = ?'; params.push(category); }
   if (minScore) { query += ' AND score >= ?';   params.push(minScore); }
-  query += ` AND (phone LIKE '+65 8%' OR phone LIKE '+65 9%' OR email != '')`;
+
+  // Fix: handle both +65 8XXXXXXX (with space) and +658XXXXXXX (without space)
+  query += ` AND (
+    phone LIKE '+65 8%' OR phone LIKE '+65 9%' OR
+    phone LIKE '+658%'  OR phone LIKE '+659%'  OR
+    phone LIKE '8%'     OR phone LIKE '9%'     OR
+    (email IS NOT NULL AND email != '')
+  )`;
+
   query += ' ORDER BY score DESC, created_at DESC LIMIT ? OFFSET ?';
   params.push(limit, offset);
 
   const rows = db.prepare(query).all(...params);
-
-  // Parse review_snippets back from JSON
   return rows.map(r => ({
     ...r,
     review_snippets: r.review_snippets ? JSON.parse(r.review_snippets) : [],
@@ -144,4 +191,21 @@ function getStats() {
   };
 }
 
-module.exports = { getDb, upsertLead, getLeads, updateLeadStatus, logOutreach, logScrape, getStats };
+// Feedback loop — which subcategories/sizes actually convert
+function getConversionStats() {
+  const db = getDb();
+  return db.prepare(`
+    SELECT
+      subcategory,
+      COUNT(*) as total,
+      SUM(CASE WHEN status IN ('replied','qualified') THEN 1 ELSE 0 END) as replied,
+      SUM(CASE WHEN status = 'qualified' THEN 1 ELSE 0 END) as converted,
+      ROUND(AVG(score), 1) as avg_score
+    FROM leads
+    WHERE status != 'new'
+    GROUP BY subcategory
+    ORDER BY converted DESC
+  `).all();
+}
+
+module.exports = { getDb, upsertLead, getLeadById, getLeads, updateLeadStatus, logOutreach, logScrape, getStats, getConversionStats };
