@@ -40,7 +40,8 @@ const SEARCH_QUERIES = [
 // A = observation + specific problem hook
 // B = direct question + binary choice hook
 function assignVariant() {
-  return Math.random() < 0.5 ? 'A' : 'B';
+  const variants = ['A', 'B', 'C', 'D'];
+  return variants[Math.floor(Math.random() * 4)];
 }
 
 // ── Phone classification ──────────────────────────────────────
